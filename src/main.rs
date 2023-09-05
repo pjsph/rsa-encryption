@@ -3,12 +3,18 @@ use std::{fs::File, io::{Write, Read}};
 use clap::{Parser, Subcommand, Args};
 use num_bigint_dig::BigUint;
 
+use sha2::{Sha256, Digest};
+
 mod key;
 use key::PrivateKey;
 use key::PublicKey;
 
 mod rsa;
 use rsa::{encrypt, decrypt};
+
+mod mgf;
+
+mod oaep;
 
 #[derive(Parser)]
 #[command(name = "encryption")]
@@ -38,7 +44,7 @@ struct DecryptArgs {
 fn main() {
     let cli = Cli::parse();
 
-    let rng = rand::thread_rng();
+    let mut rng = rand::thread_rng();
 
     match &cli.command {
         Commands::Generate => {
@@ -86,7 +92,15 @@ fn main() {
                         e
                     };
 
-                    if let Ok(encrypted_message) = encrypt(&public_key, &args.message) {
+                    let encoded_message = match oaep::encode(Sha256::new(), &args.message.as_bytes(), &mut rng) {
+                        Ok(res) => res,
+                        Err(e) => {
+                            println!("{}", e);
+                            return ();
+                        }
+                    };
+
+                    if let Ok(encrypted_message) = encrypt(&public_key, &encoded_message) {
                         println!("{}\n\nYour encrypted message can be found above.", encrypted_message);
                     } else {
                         println!("ERROR: couldn't encrypt your message.");
@@ -129,7 +143,20 @@ fn main() {
                             };
 
                             if let Ok(decrypted_message) = decrypt(&private_key, &args.message) {
-                                println!("{}\n\nYour decrypted message can be found above.", decrypted_message);
+                                let decoded_message = match oaep::decode(Sha256::new(), decrypted_message) {
+                                    Ok(decoded_message) => decoded_message,
+                                    Err(e) => {
+                                        println!("{}", e);
+                                        return ()
+                                    }
+                                };
+
+                                if let Ok(decoded_message_str) = String::from_utf8(decoded_message) {
+                                    println!("{}\n\nYour decrypted message can be found above.", decoded_message_str);
+                                } else {
+                                    println!("ERROR: couldn't decode your message.");
+                                }
+
                             } else {
                                 println!("ERROR: couldn't decrypt your message.");
                             }
